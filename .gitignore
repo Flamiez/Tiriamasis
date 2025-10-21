@@ -12,7 +12,6 @@ sandbox/
 build/
 data/
 models/
-app/data
 develop-eggs/
 dist/
 downloads/
