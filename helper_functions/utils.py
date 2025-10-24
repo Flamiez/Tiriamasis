@@ -9,7 +9,42 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 from .object_models import ParsedImage
+from sklearn.cluster import KMeans
+import cv2
+import matplotlib.pyplot as plt
+from PIL import Image
+import numpy as np
 
+def display_masks(images_list, masks_list):
+    for i, (images, masks) in enumerate(zip(images_list, masks_list)):
+        fig, axes = plt.subplots(1, len(images), figsize=(3 * len(images), 3))
+        for j, (image, mask) in enumerate(zip(images, masks)):
+            dst = cv2.addWeighted(image, 1, (cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) * (0, 255, 0)).astype(np.uint8), 0.5, 0)
+            axes[j].imshow(dst)
+            axes[j].axis("off")
+        plt.show()
+        
+def get_person_masks_for_sequence(sequence, model):
+    images = []
+    masks = []
+
+    for item in sequence:
+        image = cv2.imread(item.image_path)
+        images.append(image)
+        results = model(image)
+        result = results[0]
+
+        if result.masks is not None:
+            mask_combined = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+            for m in result.masks.data.cpu().numpy():
+                mask_resized = cv2.resize(m, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+                mask_combined = np.maximum(mask_combined, mask_resized.astype(np.uint8))
+        else:
+            mask_combined = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+
+        masks.append(mask_combined)
+
+    return images, masks
 
 class PersonReIDDataset(Dataset):
     def __init__(self, root_dir, transform=None, is_training=True, max_frame_gap=50):
@@ -17,8 +52,7 @@ class PersonReIDDataset(Dataset):
         self.is_training = is_training
         self.parsed_images = []
         self.max_frame_gap = max_frame_gap
-        self.sequences_by_person = {}  # {person_id: {camera_id: [ [ParsedImage,...], ... ]}}
-        
+        self.sequences_by_person = {}
         
         # Filename example 0005_c4s1_002993_01.jpg
 
@@ -50,7 +84,6 @@ class PersonReIDDataset(Dataset):
         """
         Split sequences when frame gap exceeds max_frame_gap.
         Keep only sequences with >=10 frames.
-        Also store them in a hashmap: sequences_by_person[person_id][camera_id] = [sequence1, sequence2, ...]
         """
         sequences = []
         current_seq = []
@@ -101,14 +134,31 @@ class PersonReIDDataset(Dataset):
             'image_path': parsed_image.image_path
         }
 
+
+def collate_fn(batch):
+    images = torch.stack([item['image'] for item in batch])
+    person_ids = torch.tensor([item['person_id'] for item in batch])
+    camera_ids = [item['camera_id'] for item in batch]
+    frame_ids = torch.tensor([item['frame_id'] for item in batch])
+    paths = [item['image_path'] for item in batch]
+    
+    return {
+        'image': images,
+        'person_id': person_ids,
+        'camera_id': camera_ids,
+        'frame_id': frame_ids,
+        'image_path': paths
+    }
+
 def extract_features(dataset, model, device='cuda'):
-    batch_size = 0
+    batch_size = 32
     dataloader = DataLoader(
         dataset, 
         batch_size=batch_size, 
         shuffle=False, 
         num_workers=4,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=collate_fn
     )
     
     features = []
@@ -167,6 +217,56 @@ class Market1501Dataset(Dataset):
             image = self.transform(image)
         return image, label
 
+def display_sequences(sequences):
+    for i, seq in enumerate(sequences):
+        fig, axes = plt.subplots(1, len(seq), figsize=(3 * len(seq), 3))
+
+        for j, parsed_img in enumerate(seq):
+            img = Image.open(parsed_img.image_path).convert('RGB')
+            img = np.array(img)
+            axes[j].imshow(img)
+            axes[j].set_title(f"PID {parsed_img.person_id}\n{parsed_img.camera_id}\nF{parsed_img.frame_id}")
+            axes[j].axis("off")
+        plt.show()
+
+def extract_palette(image, mask, n_colors=5):
+    masked_pixels = image[mask > 0]
+    if len(masked_pixels) == 0:
+        return np.zeros((n_colors, 3), dtype=np.uint8)
+    
+    kmeans = KMeans(n_clusters=n_colors, n_init=10)
+    kmeans.fit(masked_pixels)
+    colors = np.clip(kmeans.cluster_centers_.astype(np.uint8), 0, 255)
+    return colors
+
+def plot_palette(colors, ax):
+    palette = np.zeros((50, 300, 3), dtype=np.uint8)
+    step = 300 // len(colors)
+    for i, color in enumerate(colors):
+        palette[:, i * step:(i + 1) * step, :] = color
+    ax.imshow(palette)
+    ax.axis("off")
+
+def display_img_mask_palette(images_list, masks_list):
+    for i, (images, masks) in enumerate(zip(images_list, masks_list)):
+        fig, axes = plt.subplots(3, len(images), figsize=(3 * len(images), 8))
+
+        for j, (image, mask) in enumerate(zip(images, masks)):
+            mask_rgb = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
+            green_overlay = np.zeros_like(mask_rgb)
+            green_overlay[:, :, 1] = mask
+            overlay = cv2.addWeighted(image, 1.0, green_overlay, 0.5, 0)
+            colors = extract_palette(image, mask, n_colors=5)
+            axes[0, j].imshow(image)
+            axes[0, j].set_title(f"{j+1}")
+            axes[1, j].imshow(cv2.addWeighted(image, 1, (cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) * (0, 255, 0)).astype(np.uint8), 0.5, 0))
+            plot_palette(colors, axes[2, j])
+
+            for k in range(3):
+                axes[k, j].axis("off")
+
+        plt.tight_layout()
+        plt.show()
 
 # Find person in images sequence and then rank them based by most recent sequences found, If many sequences which are found lets say when using 4 consecutive images, sort them by most recent ones and by similarity assigning weights of importance to both
 
