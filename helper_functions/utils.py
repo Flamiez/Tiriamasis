@@ -1,9 +1,6 @@
-from torch.utils.data import Dataset
 import os
 from PIL import Image
-import os
 import numpy as np
-from PIL import Image
 import torch
 import torchvision.transforms as transforms
 from torch.utils.data import Dataset, DataLoader
@@ -12,39 +9,6 @@ from .object_models import ParsedImage
 from sklearn.cluster import KMeans
 import cv2
 import matplotlib.pyplot as plt
-from PIL import Image
-import numpy as np
-
-def display_masks(images_list, masks_list):
-    for i, (images, masks) in enumerate(zip(images_list, masks_list)):
-        fig, axes = plt.subplots(1, len(images), figsize=(3 * len(images), 3))
-        for j, (image, mask) in enumerate(zip(images, masks)):
-            dst = cv2.addWeighted(image, 1, (cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) * (0, 255, 0)).astype(np.uint8), 0.5, 0)
-            axes[j].imshow(dst)
-            axes[j].axis("off")
-        plt.show()
-        
-def get_person_masks_for_sequence(sequence, model):
-    images = []
-    masks = []
-
-    for item in sequence:
-        image = cv2.imread(item.image_path)
-        images.append(image)
-        results = model(image)
-        result = results[0]
-
-        if result.masks is not None:
-            mask_combined = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-            for m in result.masks.data.cpu().numpy():
-                mask_resized = cv2.resize(m, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
-                mask_combined = np.maximum(mask_combined, mask_resized.astype(np.uint8))
-        else:
-            mask_combined = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
-
-        masks.append(mask_combined)
-
-    return images, masks
 
 class PersonReIDDataset(Dataset):
     def __init__(self, root_dir, transform=None, is_training=True, max_frame_gap=50):
@@ -94,9 +58,7 @@ class PersonReIDDataset(Dataset):
                 continue
 
             last = current_seq[-1]
-            same_person_cam = (
-                img.person_id == last.person_id and img.camera_id == last.camera_id
-            )
+            same_person_cam = (img.person_id == last.person_id and img.camera_id == last.camera_id)
             frame_gap = img.frame_id - last.frame_id
 
             if same_person_cam and frame_gap <= self.max_frame_gap:
@@ -229,7 +191,7 @@ def display_sequences(sequences):
             axes[j].axis("off")
         plt.show()
 
-def extract_palette(image, mask, n_colors=5):
+def get_image_palette(image, mask, n_colors=5):
     masked_pixels = image[mask > 0]
     if len(masked_pixels) == 0:
         return np.zeros((n_colors, 3), dtype=np.uint8)
@@ -255,8 +217,7 @@ def display_img_mask_palette(images_list, masks_list):
             mask_rgb = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB)
             green_overlay = np.zeros_like(mask_rgb)
             green_overlay[:, :, 1] = mask
-            overlay = cv2.addWeighted(image, 1.0, green_overlay, 0.5, 0)
-            colors = extract_palette(image, mask, n_colors=5)
+            colors = get_image_palette(image, mask, n_colors=5)
             axes[0, j].imshow(image)
             axes[0, j].set_title(f"{j+1}")
             axes[1, j].imshow(cv2.addWeighted(image, 1, (cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) * (0, 255, 0)).astype(np.uint8), 0.5, 0))
@@ -267,6 +228,42 @@ def display_img_mask_palette(images_list, masks_list):
 
         plt.tight_layout()
         plt.show()
+
+def display_masks(images_list, masks_list):
+    for i, (images, masks) in enumerate(zip(images_list, masks_list)):
+        fig, axes = plt.subplots(1, len(images), figsize=(3 * len(images), 3))
+        for j, (image, mask) in enumerate(zip(images, masks)):
+            axes[j].imshow(cv2.addWeighted(image, 1, (cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB) * (0, 255, 0)).astype(np.uint8), 0.5, 0))
+            axes[j].axis("off")
+        plt.show()
+
+def get_person_masks_for_sequence(sequence, model):
+    images = []
+    masks = []
+
+    for item in sequence:
+        image = cv2.imread(item.image_path)
+        images.append(image)
+        mask_combined = get_image_mask(image, model)
+        masks.append(mask_combined)
+
+    return images, masks
+
+def get_image_mask(image, model):
+    results = model(image)
+    result = results[0]
+
+    if result.masks is not None:
+        mask_combined = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+        for m in result.masks.data.cpu().numpy():
+            mask_resized = cv2.resize(m, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            mask_combined = np.maximum(mask_combined, mask_resized.astype(np.uint8))
+    else:
+        mask_combined = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+
+    return mask_combined
+
+
 
 # Find person in images sequence and then rank them based by most recent sequences found, If many sequences which are found lets say when using 4 consecutive images, sort them by most recent ones and by similarity assigning weights of importance to both
 
