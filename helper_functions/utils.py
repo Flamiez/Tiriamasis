@@ -242,7 +242,7 @@ def get_person_masks_for_sequence(sequence, model):
     masks = []
 
     for item in sequence:
-        image = cv2.imread(item.image_path)
+        image = cv2.cvtColor(cv2.imread(item.image_path), cv2.COLOR_BGR2RGB)
         images.append(image)
         mask_combined = get_image_mask(image, model)
         masks.append(mask_combined)
