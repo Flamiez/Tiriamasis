@@ -45,10 +45,6 @@ class PersonReIDDataset(Dataset):
         self._split_sequences_by_frame_gap()
     
     def _split_sequences_by_frame_gap(self):
-        """
-        Split sequences when frame gap exceeds max_frame_gap.
-        Keep only sequences with >=10 frames.
-        """
         sequences = []
         current_seq = []
 
@@ -102,14 +98,12 @@ def collate_fn(batch):
     person_ids = torch.tensor([item['person_id'] for item in batch])
     camera_ids = [item['camera_id'] for item in batch]
     frame_ids = torch.tensor([item['frame_id'] for item in batch])
-    paths = [item['image_path'] for item in batch]
     
     return {
         'image': images,
         'person_id': person_ids,
         'camera_id': camera_ids,
-        'frame_id': frame_ids,
-        'image_path': paths
+        'frame_id': frame_ids
     }
 
 def extract_features(dataset, model, device='cuda'):
@@ -139,12 +133,11 @@ def extract_features(dataset, model, device='cuda'):
             
             features.append(batch_features)
             labels.extend(batch['person_id'].numpy())
-            camera_ids.extend(batch['camera_id'].numpy())
+            camera_ids.extend(batch['camera_id'])
             frame_ids.extend(batch['frame_id'].numpy())
     
     features = np.concatenate(features, axis=0)
     labels = np.array(labels)
-    camera_ids = np.array(camera_ids)
     frame_ids = np.array(frame_ids)
     
     return features, labels, camera_ids, frame_ids
@@ -152,8 +145,8 @@ def extract_features(dataset, model, device='cuda'):
 def prepare_data(data_dir, model, is_training=False):
 
     dataset = PersonReIDDataset(data_dir, is_training=is_training)
-    features, labels, camera_ids = extract_features(dataset, model)
-    return features, labels, camera_ids
+    features, labels, camera_ids, frame_ids = extract_features(dataset, model)
+    return features, labels, camera_ids, frame_ids
 
 
 class Market1501Dataset(Dataset):
