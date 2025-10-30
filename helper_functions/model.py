@@ -56,3 +56,7 @@ class FeatureExtractModel(nn.Module):
         norm_embedding = nn.functional.normalize(embedding, p=2, dim=1)
         
         return norm_embedding 
+    
+class RNNModel(nn.Module):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
